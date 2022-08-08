@@ -1,0 +1,22 @@
+Source: greetd
+Section: admin
+Priority: optional
+Maintainer: System76 <info@system76.com>
+Build-Depends:
+  debhelper (>= 11),
+  debhelper-compat (= 11),
+  cargo,
+  just,
+  libpam0g-dev,
+  scdoc,
+  pkg-config
+Standards-Version: 4.3.0
+Homepage: https://git.sr.ht/~kennylevinsen/greetd
+
+Package: greetd
+Architecture: amd64 arm64
+Depends:
+  ${misc:Depends},
+  ${shlibs:Depends},
+  libpam0g
+Description: A minimal and flexible login manager daemon that makes no assumptions about what you want to launch

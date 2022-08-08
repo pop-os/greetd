@@ -1,0 +1,7 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: greetd
+Source: https://git.sr.ht/~kennylevinsen/greetd
+
+Files: *
+Copyright: Copyright 2022 Kenny Levinsen
+License: GPL-3.0
