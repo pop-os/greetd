@@ -1,5 +1,5 @@
-greetd (0.8.0) UNRELEASED; urgency=medium
+greetd (0.10.0) jammy; urgency=medium
 
-  * Initial release.
+  * Upstream version 0.10.0
 
- -- Lucy <lucy@system76.com>  Thu, 07 Jul 2022 14:42:01 -0400
+ -- Jeremy Soller <jeremy@system76.com>  Wed, 05 Jun 2024 10:33:20 -0600
