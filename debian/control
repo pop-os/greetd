@@ -19,4 +19,5 @@ Depends:
   ${misc:Depends},
   ${shlibs:Depends},
   libpam0g
+Breaks: ecryptfs-utils
 Description: A minimal and flexible login manager daemon that makes no assumptions about what you want to launch
