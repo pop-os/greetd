@@ -2,6 +2,7 @@ use std::{
     env,
     ffi::{c_char, CString},
     os::unix::net::UnixDatagram,
+    sync::{LazyLock, Mutex},
 };
 
 use nix::{
@@ -16,6 +17,9 @@ use super::{
     prctl::{prctl, PrctlOption},
 };
 use crate::{error::Error, pam::session::PamSession, terminal};
+
+// utmpx mutates global state so it needs to be guarded.
+static UTMP_GUARD: LazyLock<Mutex<()>> = LazyLock::new(Mutex::default);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AuthMessageType {
@@ -344,6 +348,19 @@ impl UtmpSession {
         tty: TerminalMode,
         session_class: SessionClass,
     ) -> Result<Self, Error> {
+        let _guard = match UTMP_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(err) => {
+                // This should never happen, but if it does it's better to just log an error rather
+                // than panicking and taking down greetd.
+                UTMP_GUARD.clear_poison();
+                return Err(Error::Error(format!(
+                    "Error writing user {} ({}) to utmp file: {}",
+                    user.name, user.uid, err
+                )));
+            }
+        };
+
         let TerminalMode::Terminal { path, vt, .. } = tty else {
             return Err(Error::Io(format!(
                 "Error writing user {} ({}) to utmp file: Not a terminal",
@@ -458,6 +475,14 @@ impl Drop for UtmpSession {
     fn drop(&mut self) {
         // The man page notes that init cleans up utmp entries automatically when the process
         // exits. Both lightdm and lemurs clean up the utmp line manually so we will too.
+        let _guard = match UTMP_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(err) => {
+                // Shouldn't ever happen.
+                eprintln!("utmpx lock poisoned: {err}");
+                return;
+            }
+        };
 
         let ut_pid = self.session.ut_pid;
         // Zero out the struct. This is less finicky than doing it by hand.
