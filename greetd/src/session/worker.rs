@@ -1,4 +1,9 @@
-use std::{env, ffi::CString, os::unix::net::UnixDatagram};
+use std::{
+    env,
+    ffi::{c_char, CString},
+    os::unix::net::UnixDatagram,
+    sync::{LazyLock, Mutex},
+};
 
 use nix::{
     sys::wait::waitpid,
@@ -12,6 +17,9 @@ use super::{
     prctl::{prctl, PrctlOption},
 };
 use crate::{error::Error, pam::session::PamSession, terminal};
+
+// utmpx mutates global state so it needs to be guarded.
+static UTMP_GUARD: LazyLock<Mutex<()>> = LazyLock::new(Mutex::default);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AuthMessageType {
@@ -166,7 +174,7 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
     // Make this process a session leader.
     setsid().map_err(|e| format!("unable to become session leader: {}", e))?;
 
-    match tty {
+    match &tty {
         TerminalMode::Stdin => (),
         TerminalMode::Terminal { path, vt, switch } => {
             // Tell PAM what TTY we're targetting, which is used by logind.
@@ -174,7 +182,7 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
             pam.putenv(&format!("XDG_VTNR={}", vt))?;
 
             // Opening our target terminal.
-            let target_term = terminal::Terminal::open(&path)?;
+            let target_term = terminal::Terminal::open(path)?;
 
             // Set the target VT mode to text for compatibility. Other login managers
             // set this to graphics, but that disallows start of textual applications,
@@ -185,10 +193,10 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
             target_term.term_clear()?;
 
             // A bit more work if a VT switch is required.
-            if switch && vt != target_term.vt_get_current()? {
+            if *switch && *vt != target_term.vt_get_current()? {
                 // Perform a switch to the target VT, simultaneously resetting it to
                 // VT_AUTO.
-                target_term.vt_setactivate(vt)?;
+                target_term.vt_setactivate(*vt)?;
             }
 
             // Connect std(in|out|err), and make this our controlling TTY.
@@ -222,10 +230,10 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
     pam.open_session(PamFlag::NONE)?;
 
     // We are done with PAM, clear variables that the child will not need.
-    _ = pam.putenv(&"XDG_SESSION_CLASS");
+    _ = pam.putenv("XDG_SESSION_CLASS");
 
     // Prepare some strings in C format that we'll need.
-    let cusername = CString::new(user.name)?;
+    let cusername = CString::new(&*user.name)?;
     let command = if source_profile {
         format!(
             "[ -f /etc/profile ] && . /etc/profile; [ -f $HOME/.profile ] && . $HOME/.profile; exec {}",
@@ -280,6 +288,11 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
         }
     };
 
+    // Update utmp to store an entry for the new session.
+    let _utmp_session = UtmpSession::new(user, child, tty, class)
+        .inspect_err(|e| eprintln!("{e}"))
+        .ok();
+
     // Signal the inner PID to the parent process.
     SessionChildToParent::FinalChildPid(child.as_raw() as u64).send(sock)?;
     sock.shutdown(std::net::Shutdown::Both)?;
@@ -310,6 +323,184 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
     pam.end()?;
 
     Ok(())
+}
+
+/// [`libc::utmpx`] session line for a logged in user.
+///
+/// `utmp` is a record of logged in sessions. It's read by programs such as `who` or `w` to list
+/// users who are logged in as well as the TTY for their session.
+///
+/// Writing to `utmp` requires elevated permissions though any program may read from it. Therefore,
+/// it is set and unset by greetd rather than deferring it to greeters.
+///
+/// # Sources
+/// The code to set and unset the `utmp` line is based on lightdm, lemurs, and the C examples from
+/// the utmpx.h man pages.
+struct UtmpSession {
+    session: libc::utmpx,
+}
+
+impl UtmpSession {
+    /// Add a utmp entry for a newly logged in user.
+    fn new(
+        user: nix::unistd::User,
+        child: nix::unistd::Pid,
+        tty: TerminalMode,
+        session_class: SessionClass,
+    ) -> Result<Self, Error> {
+        let _guard = match UTMP_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(err) => {
+                // This should never happen, but if it does it's better to just log an error rather
+                // than panicking and taking down greetd.
+                UTMP_GUARD.clear_poison();
+                return Err(Error::Error(format!(
+                    "Error writing user {} ({}) to utmp file: {}",
+                    user.name, user.uid, err
+                )));
+            }
+        };
+
+        let TerminalMode::Terminal { path, vt, .. } = tty else {
+            return Err(Error::Io(format!(
+                "Error writing user {} ({}) to utmp file: Not a terminal",
+                user.name, user.uid
+            )));
+        };
+        if !matches!(session_class, SessionClass::User) {
+            return Err(Error::Error(format!(
+                "Error writing user {} ({}) to utmp file: Not user session",
+                user.name, user.uid
+            )));
+        }
+
+        // Largely based off of lightdm, lemurs, and utmpx/utmp.h man pages
+        // SAFETY: Types need neither to be specially constructed nor specially dropped
+        let mut session: libc::utmpx = unsafe { std::mem::zeroed() };
+
+        session.ut_type = libc::USER_PROCESS;
+        // User session PID
+        session.ut_pid = child.as_raw();
+        // Copy username
+        // SAFETY:
+        // * ut_user and name are valid pointers
+        // * ut_user is at least __UT_NAMESIZE bytes
+        // * ut_user is nul terminated due to being zeroed, and if the user name is __UT_NAMESIZE
+        // bytes then it does not need to end in a nul according to the manual
+        // * The username from Nix is ASCII according to the docs
+        unsafe {
+            libc::strncpy(
+                session.ut_user.as_mut_ptr(),
+                user.name.as_ptr().cast(),
+                libc::__UT_NAMESIZE,
+            );
+        }
+
+        // TTY. More or less verbatim from lemurs with a bug fix.
+        let ut_id = if vt > 9 {
+            b'S' as c_char
+        } else {
+            (b'0' + vt as u8) as c_char
+        };
+        session.ut_id[0] = 't' as c_char;
+        session.ut_id[1] = 't' as c_char;
+        session.ut_id[2] = 'y' as c_char;
+        session.ut_id[3] = ut_id;
+
+        // TTY path
+        // SAFETY: Same as the username code except with __UT_LINESIZE as the size
+        let ut_line = path.strip_prefix("/dev/").unwrap_or(path.as_str());
+        unsafe {
+            libc::strncpy(
+                session.ut_line.as_mut_ptr(),
+                ut_line.as_ptr().cast(),
+                libc::__UT_LINESIZE,
+            );
+        }
+
+        // Hostname
+        // SAFETY: gethostname is safe to call. It will write up to __UT_HOSTSIZE
+        // bytes of the host name, truncating if necessary.
+        unsafe {
+            // Some implementations leave this unset or set it to other variables like DISPLAY.
+            libc::gethostname(session.ut_host.as_mut_ptr(), libc::__UT_HOSTSIZE);
+        }
+
+        // Time
+        let mut timeval = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        // SAFETY: Safe to call and doesn't define errors
+        unsafe {
+            libc::gettimeofday(&raw mut timeval, std::ptr::null_mut());
+        }
+        // utmpx's internal struct timeval is different from the real timeval due to backwards
+        // compatibility with 32 bit programs.
+        // The 64-bit, corrected timeval can be opted into with defines but libc doesn't have a way
+        // to do so yet.
+        // LightDM (C) doesn't have this issue but lemurs (Rust) does. I also checked SDDM and GDM.
+        session.ut_tv.tv_sec = timeval.tv_sec as i32;
+        session.ut_tv.tv_usec = timeval.tv_usec as i32;
+
+        // SAFETY:
+        // * Rewinding the internal utmp file pos is safe and should be done per the manual.
+        // * utmpx contains valid data from the launched session and is non-null.
+        let error = unsafe {
+            libc::setutxent();
+            libc::pututxline(&session)
+                .is_null()
+                .then(nix::errno::Errno::last)
+        };
+
+        // SAFETY:
+        // * Closing the utmp file handle is recommended by the man pages and doesn't have invariants
+        // to uphold
+        unsafe {
+            libc::endutxent();
+        }
+
+        if let Some(error) = error {
+            Err(Error::Io(format!(
+                "Error writing user {} ({}) to utmp file: {}",
+                user.name, user.uid, error
+            )))
+        } else {
+            Ok(Self { session })
+        }
+    }
+}
+
+impl Drop for UtmpSession {
+    fn drop(&mut self) {
+        // The man page notes that init cleans up utmp entries automatically when the process
+        // exits. Both lightdm and lemurs clean up the utmp line manually so we will too.
+        let _guard = match UTMP_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(err) => {
+                // Shouldn't ever happen.
+                eprintln!("utmpx lock poisoned: {err}");
+                return;
+            }
+        };
+
+        let ut_pid = self.session.ut_pid;
+        // Zero out the struct. This is less finicky than doing it by hand.
+        self.session = unsafe { std::mem::zeroed() };
+
+        // Restore PID and set the indicator that line should be removed.
+        self.session.ut_pid = ut_pid;
+        self.session.ut_type = libc::DEAD_PROCESS;
+
+        // SAFETY:
+        // * Same as [`UtmpSession::new`]
+        // * The utmp API will safely update the line
+        unsafe {
+            libc::setutxent();
+            libc::pututxline(&self.session);
+            libc::endutxent();
+        }
+    }
 }
 
 pub fn main(sock: &UnixDatagram) -> Result<(), Error> {
