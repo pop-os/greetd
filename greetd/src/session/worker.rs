@@ -289,9 +289,13 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
     };
 
     // Update utmp to store an entry for the new session.
-    let _utmp_session = UtmpSession::new(user, child, tty, class)
+    let _utmp_session = if matches!(class, SessionClass::User) {
+        UtmpSession::new(user, child, tty, class)
         .inspect_err(|e| eprintln!("{e}"))
-        .ok();
+        .ok()
+    } else {
+        None
+    };
 
     // Signal the inner PID to the parent process.
     SessionChildToParent::FinalChildPid(child.as_raw() as u64).send(sock)?;
