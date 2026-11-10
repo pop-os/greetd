@@ -51,6 +51,7 @@ pub struct Context {
 }
 
 impl Context {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         greeter_bin: String,
         greeter_user: String,
@@ -104,7 +105,7 @@ impl Context {
             match scheduled_session.get_state().await {
                 Ok(SessionState::Ready) => break,
                 Ok(SessionState::Question(_, _)) => scheduled_session.post_response(None).await?,
-                Err(err) => return Err(format!("session start failed: {}", err).into()),
+                Err(err) => return Err(format!("session start failed: {err}").into()),
             }
         }
 
@@ -151,12 +152,17 @@ impl Context {
     /// Create runfile used to check if greetd was already started since boot
     pub fn create_runfile(&self) {
         if let Err(err) = File::create(&self.runfile) {
-            eprintln!("could not create runfile: {}", err);
+            eprintln!("could not create runfile: {err}");
         }
     }
 
     /// Directly start an initial session, bypassing the normal scheduling.
-    pub async fn start_user_session(&self, user: &str, cmd: Vec<String>) -> Result<(), Error> {
+    pub async fn start_user_session(
+        &self,
+        user: &str,
+        service: &str,
+        cmd: Vec<String>,
+    ) -> Result<(), Error> {
         {
             let inner = self.inner.read().await;
             if inner.current.is_some() {
@@ -167,7 +173,7 @@ impl Context {
         let mut inner = self.inner.write().await;
         inner.current = Some(SessionChildSet {
             child: self
-                .start_unauthenticated_session(SessionClass::User, user, &self.pam_service, cmd)
+                .start_unauthenticated_session(SessionClass::User, user, service, cmd)
                 .await?,
             time: Instant::now(),
             is_greeter: false,
@@ -261,7 +267,7 @@ impl Context {
                 if let Some(mut answer) = answer {
                     answer.scramble();
                 }
-                return Err("no session under configuration".into());
+                Err("no session under configuration".into())
             }
         }
     }
@@ -320,7 +326,7 @@ impl Context {
             drop(inner);
             let s = match p.session.start().await {
                 Ok(s) => s,
-                Err(e) => return Err(format!("session start failed: {}", e).into()),
+                Err(e) => return Err(format!("session start failed: {e}").into()),
             };
             let mut inner = self.inner.write().await;
             inner.current = Some(SessionChildSet {
@@ -360,7 +366,7 @@ impl Context {
                             drop(inner);
                             let s = match scheduled.session.start().await {
                                 Ok(s) => s,
-                                Err(e) => return Err(format!("session start failed: {}", e).into()),
+                                Err(e) => return Err(format!("session start failed: {e}").into()),
                             };
                             let mut inner = self.inner.write().await;
                             inner.current = Some(SessionChildSet {

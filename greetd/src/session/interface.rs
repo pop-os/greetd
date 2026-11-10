@@ -29,13 +29,13 @@ trait AsyncSend {
 }
 
 #[async_trait]
-impl<'a> AsyncSend for ParentToSessionChild<'a> {
+impl AsyncSend for ParentToSessionChild<'_> {
     async fn send(&self, sock: &mut TokioUnixDatagram) -> Result<(), Error> {
         let mut out =
-            serde_json::to_vec(self).map_err(|e| format!("unable to serialize message: {}", e))?;
+            serde_json::to_vec(self).map_err(|e| format!("unable to serialize message: {e}"))?;
         sock.send(&out)
             .await
-            .map_err(|e| format!("unable to send message: {}", e))?;
+            .map_err(|e| format!("unable to send message: {e}"))?;
         out.scramble();
         Ok(())
     }
@@ -48,14 +48,14 @@ impl AsyncRecv<SessionChildToParent> for SessionChildToParent {
         let len = sock
             .recv(&mut data[..])
             .await
-            .map_err(|e| format!("unable to recieve message: {}", e))?;
+            .map_err(|e| format!("unable to recieve message: {e}"))?;
         let msg = serde_json::from_slice(&data[..len])
-            .map_err(|e| format!("unable to deserialize message: {}", e))?;
+            .map_err(|e| format!("unable to deserialize message: {e}"))?;
         Ok(msg)
     }
 }
 
-/// SessionChild tracks the processes spawned by a session
+/// Tracks the processes spawned by a session
 pub struct SessionChild {
     pub task: Pid,
     pub sub_task: Pid,
@@ -97,23 +97,25 @@ impl Session {
     pub fn new_external() -> Result<Session, Error> {
         // Pipe used to communicate the true PID of the final child.
         let (parentfd, childfd) =
-            UnixDatagram::pair().map_err(|e| format!("could not create pipe: {}", e))?;
+            UnixDatagram::pair().map_err(|e| format!("could not create pipe: {e}"))?;
 
         let raw_child = childfd.as_raw_fd();
         let mut cur_flags = FdFlag::from_bits_retain(fcntl(raw_child, FcntlArg::F_GETFD)?);
         cur_flags.remove(FdFlag::FD_CLOEXEC);
         fcntl(raw_child, FcntlArg::F_SETFD(cur_flags))?;
 
-        let cur_exe = std::env::current_exe()?;
-        let bin = CString::new(cur_exe.to_str().expect("unable to get current exe name"))?;
-
-        let child = match unsafe { fork() }.map_err(|e| format!("unable to fork: {}", e))? {
+        // On Linux, /proc/self/exe is a reference to the original file, which remains valid
+        // in spite of unlink or rename similar to an already open fd. It is, however, not very
+        // portable. On FreeBSD, we would likely need to open our own process file early and rely
+        // on fexecve, using the KERN_PROC_PATHNAME sysctl to get the path.
+        #[allow(unreachable_code)]
+        let child = match unsafe { fork() }.map_err(|e| format!("unable to fork: {e}"))? {
             ForkResult::Parent { child, .. } => child,
             ForkResult::Child => {
                 execv(
-                    &bin,
+                    &CString::new("/proc/self/exe").unwrap(),
                     &[
-                        &bin,
+                        &CString::new("greetd").unwrap(),
                         &CString::new("--session-worker").unwrap(),
                         &CString::new(format!("{}", raw_child as usize)).unwrap(),
                     ],
@@ -132,6 +134,7 @@ impl Session {
     }
 
     /// Initiates the session, which will cause authentication to begin.
+    #[allow(clippy::too_many_arguments)]
     pub async fn initiate(
         &mut self,
         service: &str,
@@ -143,13 +146,13 @@ impl Session {
         listener_path: &str,
     ) -> Result<(), Error> {
         let msg = ParentToSessionChild::InitiateLogin {
-            service: service,
-            class: class,
-            user: user,
+            service,
+            class,
+            user,
             authenticate,
             tty: term_mode.clone(),
             source_profile,
-            listener_path: listener_path,
+            listener_path,
         };
         msg.send(&mut self.sock).await?;
         Ok(())

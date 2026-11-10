@@ -11,16 +11,20 @@ See the [wiki](https://man.sr.ht/~kennylevinsen/greetd) for FAQ, guides for comm
 ## List of known greetd greeters
 
 - agreety - The simple, text-based greeter living in this repo is a simple example.
+- [cosmic-greeter](https://github.com/pop-os/cosmic-greeter) - The default greeter for the COSMIC desktop environment
 - [gtkgreet](https://git.sr.ht/~kennylevinsen/gtkgreet) - The flagship graphical, GTK based greeter (xdg-shell or wlr-layer-shell, to be used with something like `sway`)
 - [qtgreet](https://gitlab.com/marcusbritanicus/QtGreet) - Qt-based greeter (using wlr-layer-shell, to be used with something like `sway`)
 - [dlm](https://git.sr.ht/~kennylevinsen/dlm) - Dumb Login Manager (using fbdev)
 - [ddlm](https://github.com/deathowl/ddlm) - Deathowl's dummy login manager (using fbdev)
+- [ndlm](https://github.com/ivandimitrov8080/ndlm) - Fork of ddlm with plymouth theming support and a more modern look (using DRM)
 - [wlgreet](https://git.sr.ht/~kennylevinsen/wlgreet) - Wayland greeter (using wlr-layer-shell, to be used with something like `sway`)
 - [tuigreet](https://github.com/apognu/tuigreet) - Console UI greeter (using tui-rs)
 - [ReGreet](https://github.com/rharish101/ReGreet) - Clean and customizable GTK4 based greeter (to be used with something like `sway`)
 - [marine_greetdm](https://github.com/Decodetalkers/marine_greetdm) - A cli greeter, by rustyline and without gui. It can configure enviroment variables for special desktops.
 - [greetd-qmlgreet](https://github.com/Decodetalkers/greetd-qmlgreet) - Qt6 qml greetd (using ext-session-shell, to be used with something like `river` and `sway`)
-- [Phog](https://gitlab.com/mobian1/phog) - A greetd-compatible greeter for mobile devices like Purism's Librem 5 and Pine64's PinePhone.
+- [Phog](https://gitlab.com/mobian1/phog) - Obsolete, use Phrog instead.
+- [Phrog](https://github.com/samcday/phrog) - A greeter that works on mobile devices and also other kinds of computers.
+- [sgreet](https://github.com/64-bitman/sgreet) - like agreety or agetty, but nicer
 
 Patches expanding the list welcome.
 

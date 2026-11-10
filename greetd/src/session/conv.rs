@@ -1,13 +1,12 @@
 use super::worker::{AuthMessageType, ParentToSessionChild, SessionChildToParent};
 use crate::pam::converse::Converse;
 
-/// SessionConv is a PAM conversation implementation that forwards questions
-/// over a socket.
+/// PAM conversation implementation that forwards questions over a socket.
 pub struct SessionConv<'a> {
     sock: &'a std::os::unix::net::UnixDatagram,
 }
 
-impl<'a> SessionConv<'a> {
+impl SessionConv<'_> {
     fn question(&self, msg: &str, style: AuthMessageType) -> Result<Option<String>, ()> {
         let mut data = [0; 10240];
         let msg = SessionChildToParent::PamMessage {
@@ -15,10 +14,10 @@ impl<'a> SessionConv<'a> {
             msg: msg.to_string(),
         };
         msg.send(self.sock)
-            .map_err(|e| eprintln!("pam_conv: {}", e))?;
+            .map_err(|e| eprintln!("pam_conv: {e}"))?;
 
         let msg = ParentToSessionChild::recv(self.sock, &mut data)
-            .map_err(|e| eprintln!("pam_conv: {}", e))?;
+            .map_err(|e| eprintln!("pam_conv: {e}"))?;
 
         match msg {
             ParentToSessionChild::PamResponse { resp, .. } => Ok(resp),
@@ -28,12 +27,12 @@ impl<'a> SessionConv<'a> {
     }
 
     /// Create a new `PasswordConv` handler
-    pub fn new(sock: &'a std::os::unix::net::UnixDatagram) -> SessionConv {
+    pub fn new(sock: &std::os::unix::net::UnixDatagram) -> SessionConv<'_> {
         SessionConv { sock }
     }
 }
 
-impl<'a> Converse for SessionConv<'a> {
+impl Converse for SessionConv<'_> {
     fn prompt_echo(&self, msg: &str) -> Result<String, ()> {
         match self.question(msg, AuthMessageType::Visible) {
             Ok(Some(response)) => Ok(response),
