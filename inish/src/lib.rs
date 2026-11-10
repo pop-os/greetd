@@ -1,9 +1,8 @@
 use std::{collections::HashMap, error::Error};
 
-fn parse_field<'a>(line: &'a str) -> Result<(&'a str, &'a str), Box<dyn Error>> {
-    let split = match line.find('=') {
-        Some(v) => v,
-        None => return Err("expected equals sign on line, but found none".into()),
+fn parse_field(line: &str) -> Result<(&str, &str), Box<dyn Error>> {
+    let Some(split) = line.find('=') else {
+        return Err("expected equals sign on line, but found none".into());
     };
 
     let (key, value) = line.split_at(split);
@@ -30,15 +29,13 @@ pub fn parse<'a>(s: &'a str) -> Result<Inish<'a>, Box<dyn Error>> {
             (Some('['), Some(']')) => {
                 sections.insert(current_section_name, current_section);
                 current_section = HashMap::new();
-                let len = line.bytes().count();
+                let len = line.len();
                 current_section_name = line[1..len - 1].trim();
             }
             (Some('['), v) => {
-                return Err(format!(
-                    "expected Some(']') to terminate section name, but got {:?}",
-                    v
-                )
-                .into());
+                return Err(
+                    format!("expected Some(']') to terminate section name, but got {v:?}",).into(),
+                );
             }
             _ if line.is_empty() => continue,
             _ => {
@@ -66,17 +63,15 @@ mod tests {
         )
         .expect("config didn't parse");
 
-        if !config.contains_key("section_a") {
-            panic!("named section did not exist");
-        }
-
-        if !config.contains_key("section_b") {
-            panic!("named section did not exist");
-        }
-
-        if !config.contains_key("") {
-            panic!("unnamed section did not exist");
-        }
+        assert!(
+            config.contains_key("section_a"),
+            "named section should exist"
+        );
+        assert!(
+            config.contains_key("section_b"),
+            "named section should exist"
+        );
+        assert!(config.contains_key(""), "unnamed section should exist")
     }
 
     #[test]
